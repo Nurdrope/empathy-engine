@@ -1,0 +1,18 @@
+# EMPATHY Engine - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Text Analysis
+vaderSentiment>=3.3.2
+transformers>=4.30.0
+torch>=2.0.0
+yake>=0.4.8
+
+# Voice Analysis
+librosa>=0.10.0
+soundfile>=0.12.1
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Optional: Audio conversion (install via system package manager)
+# sudo apt install ffmpeg  # Linux
+# brew install ffmpeg      # macOS
