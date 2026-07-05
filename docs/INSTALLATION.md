@@ -258,6 +258,6 @@ After installation:
 ## Support
 
 For installation issues:
-- Check `PROJECT_SUMMARY.md` for architecture overview
+- Check `docs/PROJECT_SUMMARY.md` for architecture overview
 - Review examples in `examples/` directory
 - Verify all system dependencies are installed

@@ -199,7 +199,7 @@ if result['primary_emotion'] in ['sadness', 'fear']:
 ## License
 
 **EMPATHY Engine v0.1.0**
-Fire Dragon (1976) / Gertz Holdings
+Nurdrope
 
 Extracted from MoodRing (November 2025)
 

@@ -1,5 +1,7 @@
 # EmpathyEngine
 
+[![Tests](https://github.com/Nurdrope/empathy-engine/actions/workflows/tests.yml/badge.svg)](https://github.com/Nurdrope/empathy-engine/actions/workflows/tests.yml)
+
 **Multi-Modal Emotional Intelligence System**
 
 A standalone AI engine that combines text sentiment analysis, voice prosody detection, and cross-modality fusion to understand authentic human emotional states.
@@ -34,20 +36,24 @@ EmpathyEngine doesn't just analyze text or voice separately - it **fuses** them:
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/empathy-engine.git
+git clone https://github.com/Nurdrope/empathy-engine.git
 cd empathy-engine
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Or install as package
+# Core install: text sentiment (VADER) + voice prosody (librosa)
 pip install -e .
 ```
 
-### With API Support
+The core install stays lightweight. Transformer-based emotion detection
+(`torch` + `transformers`, ~2GB) is opt-in — without it, the engine still runs
+and falls back to fast VADER-based analysis.
+
+### Optional Extras
 
 ```bash
-pip install -e ".[api]"
+pip install -e ".[ml]"    # transformer emotion detection (torch, ~2GB)
+pip install -e ".[api]"   # REST API (FastAPI + uvicorn)
+pip install -e ".[nlp]"   # embeddings, spaCy entities, readability
+pip install -e ".[all]"   # everything
 ```
 
 ### Optional Enhancements
@@ -508,7 +514,7 @@ Alpha builds expose full outputs for inspection and logging. For v1.0:
 - Default responses return `user_view` only; `clinical_view` requires an explicit opt-in.
 - Add redaction for sensitive strings in logs by default.
 
-Draft schema: `SAFETY_SCHEMA.md`.
+Draft schema: [`docs/SAFETY_SCHEMA.md`](docs/SAFETY_SCHEMA.md).
 
 ## Technical Details
 
@@ -557,7 +563,7 @@ MIT License - See LICENSE file
 
 ## Credits
 
-**Created by**: Fire Dragon (1976) / Gertz Holdings
+**Created by**: Nurdrope
 **Extracted from**: MoodRing Division (Nov 2025)
 **The Breakthrough Session**: November 21, 2025 - 9 hours that validated multi-modal emotional AI
 
