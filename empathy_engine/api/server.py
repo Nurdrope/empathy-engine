@@ -38,6 +38,7 @@ app = FastAPI(
 )
 
 BODY_METHODS = {"POST", "PUT", "PATCH"}
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 # Room for multipart boundaries and form fields around the audio itself.
 MULTIPART_OVERHEAD = 64 * 1024
 
@@ -1197,10 +1198,17 @@ def main() -> None:
             "    python -c \"import secrets; print(secrets.token_urlsafe(32))\")\n"
             "  or, for local development only, EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED=1"
         )
-    if security_config.allow_unauthenticated:
-        logger.warning("API keys are DISABLED (EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED); local development only")
-
     host = os.getenv("HOST", "127.0.0.1")
+
+    if security_config.allow_unauthenticated:
+        if host not in LOOPBACK_HOSTS:
+            sys.exit(
+                f"Refusing to start: keys are disabled (EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED) "
+                f"but HOST={host} would expose the API beyond this machine.\n"
+                "  Use HOST=127.0.0.1, or configure EMPATHY_ENGINE_API_KEYS."
+            )
+        logger.warning("API keys are DISABLED (local mode); reachable from this machine only")
+
     try:
         port = int(os.getenv("PORT", "8000"))
     except ValueError:

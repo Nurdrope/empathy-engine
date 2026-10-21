@@ -264,3 +264,32 @@ def test_stt_failure_logs_never_include_transcript(use_config, monkeypatch, tmp_
                         "sh -c 'echo sdrowterces | rev; exit 3'")
     assert server._run_stt(str(tmp_path / "a.wav")) is None
     assert logged and not any("secretwords" in m for m in logged)
+
+
+# --- Startup checks (main) ------------------------------------------------------------
+
+def test_local_mode_refuses_non_loopback_host(use_config, monkeypatch):
+    use_config(api_keys=frozenset(), allow_unauthenticated=True)
+    monkeypatch.setenv("HOST", "0.0.0.0")
+    started = []
+    monkeypatch.setattr(server.EmpathyAPI, "run", lambda self, **kw: started.append(kw))
+    with pytest.raises(SystemExit) as exc:
+        server.main()
+    assert "HOST=0.0.0.0" in str(exc.value)
+    assert started == []
+
+
+def test_local_mode_starts_on_loopback(use_config, monkeypatch):
+    use_config(api_keys=frozenset(), allow_unauthenticated=True)
+    monkeypatch.delenv("HOST", raising=False)
+    started = []
+    monkeypatch.setattr(server.EmpathyAPI, "run", lambda self, **kw: started.append(kw))
+    server.main()
+    assert started == [{"host": "127.0.0.1", "port": 8000}]
+
+
+def test_no_keys_refuses_to_start(use_config, monkeypatch):
+    use_config(api_keys=frozenset())
+    monkeypatch.setattr(server.EmpathyAPI, "run", lambda self, **kw: None)
+    with pytest.raises(SystemExit):
+        server.main()

@@ -144,8 +144,8 @@ export EMPATHY_ENGINE_API_KEYS="$(python -c 'import secrets; print(secrets.token
 # Default: this machine only (127.0.0.1:8000)
 python -m empathy_engine.api.server
 
-# Local development without keys (never on a reachable server)
-EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED=1 python -m empathy_engine.api.server
+# Local mode: no keys, this machine only (refuses to start on any other address)
+./run_local.sh
 ```
 
 #### Security settings
@@ -153,7 +153,7 @@ EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED=1 python -m empathy_engine.api.server
 | Variable | Default | Purpose |
 |---|---|---|
 | `EMPATHY_ENGINE_API_KEYS` | *(none: server won't start)* | Comma-separated keys (16+ chars). Several keys let you give each app its own and revoke one at a time. |
-| `EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED` | off | `1` disables keys. Local development only. |
+| `EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED` | off | `1` disables keys (what `run_local.sh` does). Only allowed with a local `HOST` (127.0.0.1 / localhost / ::1). |
 | `EMPATHY_ENGINE_CORS_ORIGINS` | *(none)* | Browser origins allowed to call the API, e.g. `https://app.example.com`. Not needed for servers, scripts or mobile apps. |
 | `EMPATHY_ENGINE_MAX_UPLOAD_MB` | 25 | Largest audio upload. |
 | `EMPATHY_ENGINE_MAX_BODY_MB` | 2 | Largest JSON/form body. |
