@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Security
+- API keys required on every endpoint except `/`, `/health` and the docs
+  (`EMPATHY_ENGINE_API_KEYS`; `Authorization: Bearer` or `X-API-Key`). New
+  endpoints are protected by default. The server refuses to start without keys
+  unless `EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED=1` (local development).
+- CORS is off by default (was `*`); allow specific origins with
+  `EMPATHY_ENGINE_CORS_ORIGINS`.
+- Request size limits: 25 MB audio uploads, 2 MB other bodies (configurable);
+  streamed bodies without a Content-Length are rejected.
+- Uploads restricted to known audio extensions; temp files always deleted.
+- ffmpeg and the STT command now time out, and ffmpeg can only read local
+  files (blocks URL-fetching tricks in crafted media files).
+- 500 errors no longer return exception text; transcripts are never logged.
+- Default bind address is now `127.0.0.1` (was `0.0.0.0`); the Docker image
+  sets `HOST=0.0.0.0` itself, runs as a non-root user, and now installs the
+  API dependencies it needs to start.
+
 ## 1.0.1 - 2026-07-04
 
 ### Changed

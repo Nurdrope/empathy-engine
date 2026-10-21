@@ -19,11 +19,18 @@ COPY README.md .
 COPY LICENSE .
 COPY empathy_engine/ ./empathy_engine/
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install the package with the API extras (FastAPI, uvicorn, multipart)
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir -e ".[api]"
 
-# Install the package
-RUN pip install --no-cache-dir -e .
+# Run as an unprivileged user, not root
+RUN useradd --create-home --uid 10001 empathy
+USER empathy
+
+# Listen on all interfaces inside the container; publish the port with
+# `-p 127.0.0.1:8000:8000` (or put it behind a reverse proxy) to control exposure.
+# API keys are required at runtime: pass -e EMPATHY_ENGINE_API_KEYS=...
+ENV HOST=0.0.0.0 PORT=8000
 
 # Expose API port
 EXPOSE 8000
