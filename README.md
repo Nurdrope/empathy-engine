@@ -51,6 +51,8 @@ and falls back to fast VADER-based analysis.
 
 ```bash
 pip install -e ".[ml]"    # transformer emotion detection (torch, ~2GB)
+# Tip: CPU-only torch is ~200MB instead of ~2GB (no NVIDIA libraries):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -e ".[ml]"
 pip install -e ".[api]"   # REST API (FastAPI + uvicorn)
 pip install -e ".[nlp]"   # embeddings, spaCy entities, readability
 pip install -e ".[all]"   # everything

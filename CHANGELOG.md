@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+- Short texts (<20 words) now use the transformer emotion model whenever the
+  `[ml]` extra is installed. Previously they always used quick mode, which only
+  maps sentiment to joy/sadness and can never report fear, anger, disgust or
+  surprise. On 8 short test sentences: model 7/8 correct, quick mode ~2/8
+  (e.g. "I'm really anxious about the appointment tomorrow and I can't sleep"
+  went from sadness to fear 99%). Without `[ml]`, behavior is unchanged.
+- Text results include `analysis_mode`: `full`, `quick`, or `quick-fallback`
+  (model requested but couldn't run), so callers know what they got.
+
 ### Security
 - API keys required on every endpoint except `/`, `/health` and the docs
   (`EMPATHY_ENGINE_API_KEYS`; `Authorization: Bearer` or `X-API-Key`). New

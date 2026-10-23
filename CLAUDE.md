@@ -98,9 +98,9 @@ When adding features to EmpathyEngine:
 ### Module Guidelines
 
 **TextAnalyzer**:
-- Short text (<20 words) uses quick VADER-based emotion inference
-- Long text uses full transformer analysis
-- Always include `force_full` parameter for override
+- With `[ml]` installed, all text uses the transformer model
+- Without it, short text (<20 words) uses quick VADER-based inference (joy/sadness/neutral only)
+- `force_full` tries the model regardless; results carry `analysis_mode` (full / quick / quick-fallback)
 
 **VoiceAnalyzer**:
 - Expects WAV format audio files
@@ -292,7 +292,7 @@ while True:
 - Check uvicorn installed: `uvicorn --version`
 
 ### Low confidence scores
-- Short text = VADER quick analysis (lower confidence)
+- Without `[ml]`, short text = VADER quick analysis (joy/sadness/neutral only); check `analysis_mode`
 - Use `force_full=True` to force transformer analysis
 - Voice analysis needs 2+ seconds of clear speech
 - Check microphone quality / background noise
