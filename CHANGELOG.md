@@ -9,6 +9,9 @@
   surprise. On 8 short test sentences: model 7/8 correct, quick mode ~2/8
   (e.g. "I'm really anxious about the appointment tomorrow and I can't sleep"
   went from sadness to fear 99%). Without `[ml]`, behavior is unchanged.
+- `run_local.sh` loads the emotion model offline once it is downloaded
+  (`HF_HUB_OFFLINE=1`): no update checks to huggingface.co (was 12 requests
+  per start). A fresh install stays online for the first download.
 - Text results include `analysis_mode`: `full`, `quick`, or `quick-fallback`
   (model requested but couldn't run), so callers know what they got.
 

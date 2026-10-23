@@ -146,7 +146,9 @@ export EMPATHY_ENGINE_API_KEYS="$(python -c 'import secrets; print(secrets.token
 # Default: this machine only (127.0.0.1:8000)
 python -m empathy_engine.api.server
 
-# Local mode: no keys, this machine only (refuses to start on any other address)
+# Local mode: no keys, this machine only (refuses to start on any other address).
+# Once the emotion model is downloaded it also loads it offline (HF_HUB_OFFLINE=1),
+# so nothing contacts huggingface.co.
 ./run_local.sh
 ```
 
