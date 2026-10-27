@@ -3,7 +3,7 @@ EmpathyEngine - FastAPI REST API Server
 Provides HTTP endpoints for emotional analysis
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -13,14 +13,23 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from ..core.engine import EmpathyEngine
 from ..utils.logging import get_logger
 from ..utils.settings import get_settings
+from .security import (
+    PUBLIC_PATHS,
+    SecurityConfig,
+    key_is_valid,
+    presented_key,
+    safe_audio_suffix,
+)
 
 # Initialize FastAPI app
 settings = get_settings()
+security_config = SecurityConfig.from_env()
 logger = get_logger(__name__)
 app = FastAPI(
     title=settings.api_title,
@@ -28,13 +37,110 @@ app = FastAPI(
     version=settings.api_version
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"]
-)
+BODY_METHODS = {"POST", "PUT", "PATCH"}
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+# Room for multipart boundaries and form fields around the audio itself.
+MULTIPART_OVERHEAD = 64 * 1024
+
+
+@app.middleware("http")
+async def security_guard(request: Request, call_next):
+    """
+    Runs before every endpoint: API key check, then request size check.
+
+    Read from the module-level `security_config` on each request so tests
+    (and future reloads) can swap the config.
+    """
+    config = security_config
+
+    if request.url.path not in PUBLIC_PATHS:
+        if not config.auth_configured:
+            # Fail closed: a server started without keys serves nothing.
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "API keys not configured on the server"},
+            )
+        if not config.allow_unauthenticated and not key_is_valid(config, presented_key(request.headers)):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid API key"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    if request.method in BODY_METHODS:
+        is_upload = request.headers.get("content-type", "").startswith("multipart/form-data")
+        limit = config.max_upload_bytes + MULTIPART_OVERHEAD if is_upload else config.max_body_bytes
+        length = request.headers.get("content-length")
+        if length is None:
+            # The size can't be checked up front for a streamed body; require
+            # the length header (every normal HTTP client sends it).
+            if "chunked" in request.headers.get("transfer-encoding", "").lower():
+                return JSONResponse(status_code=411, content={"detail": "Content-Length required"})
+        else:
+            try:
+                too_big = int(length) > limit
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+            if too_big:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": f"Request too large (limit {limit // (1024 * 1024)} MB)"},
+                )
+
+    return await call_next(request)
+
+
+# Added after the guard so it wraps it: browser preflight (OPTIONS) requests
+# get CORS answers without needing a key. No origins configured = no CORS
+# headers at all, so browsers on other sites can't call the API.
+if security_config.cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(security_config.cors_origins),
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "X-API-Key", "Content-Type"],
+    )
+
+
+def _internal_error(exc: Exception) -> HTTPException:
+    """
+    Log the real error server-side; tell the client only that it failed.
+
+    Exception text can contain file paths, library internals or fragments of
+    the analyzed input, none of which should go back over the network.
+    """
+    logger.error("Request failed", error_type=type(exc).__name__, error=str(exc))
+    return HTTPException(status_code=500, detail="Internal error while processing the request")
+
+
+async def _save_upload(file: UploadFile, suffix: str) -> str:
+    """Stream an upload to a temp file, enforcing the size limit; return its path."""
+    limit = security_config.max_upload_bytes
+    written = 0
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        try:
+            while chunk := await file.read(1024 * 1024):
+                written += len(chunk)
+                if written > limit:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Audio file too large (limit {limit // (1024 * 1024)} MB)",
+                    )
+                tmp.write(chunk)
+        except BaseException:
+            tmp.close()
+            _unlink_quietly(tmp.name)
+            raise
+        return tmp.name
+
+
+def _unlink_quietly(path: Optional[str]) -> None:
+    if path:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 # Initialize engine
@@ -87,6 +193,10 @@ def _run_stt(audio_path: str) -> Optional[str]:
             logger.error("STT command template failed", error=str(exc))
             return None
 
+        # The command comes from the server's own config, never from a request,
+        # and runs without a shell, so request data can't add commands. The
+        # only request-influenced part is the {wav} path, whose suffix is
+        # whitelisted by safe_audio_suffix().
         try:
             args = shlex.split(rendered)
             if len(args) >= 2 and os.path.isdir(args[0]):
@@ -96,21 +206,26 @@ def _run_stt(audio_path: str) -> Optional[str]:
             result = subprocess.run(
                 args,
                 capture_output=True,
-                text=True
+                text=True,
+                stdin=subprocess.DEVNULL,
+                timeout=security_config.subprocess_timeout,
             )
+        except subprocess.TimeoutExpired:
+            logger.error("STT command timed out", timeout=security_config.subprocess_timeout)
+            return None
         except Exception as exc:
             logger.error(
                 f"STT command execution failed: {exc} | command={rendered}"
             )
             return None
 
+        # stdout is deliberately never logged: it is the user's transcript.
         if result.returncode != 0:
             logger.error(
-                "STT command failed: returncode={rc} | command={cmd} | stdout={out} | stderr={err}".format(
+                "STT command failed: returncode={rc} | command={cmd} | stderr={err}".format(
                     rc=result.returncode,
                     cmd=rendered,
-                    out=(result.stdout or "").strip(),
-                    err=(result.stderr or "").strip()
+                    err=(result.stderr or "").strip()[-2000:]
                 )
             )
             return None
@@ -130,11 +245,10 @@ def _run_stt(audio_path: str) -> Optional[str]:
         except Exception as exc:
             entries = [f"error_listing_dir: {exc}"]
         logger.error(
-            "STT produced no transcript: returncode={rc} | command={cmd} | stdout={out} | stderr={err} | dir_entries={entries}".format(
+            "STT produced no transcript: returncode={rc} | command={cmd} | stderr={err} | dir_entries={entries}".format(
                 rc=result.returncode,
                 cmd=rendered,
-                out=(result.stdout or "").strip(),
-                err=(result.stderr or "").strip(),
+                err=(result.stderr or "").strip()[-2000:],
                 entries=entries
             )
         )
@@ -151,23 +265,31 @@ def _convert_to_wav(input_path: str) -> Optional[str]:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
         wav_path = tmp.name
 
-    result = subprocess.run(
-        ["ffmpeg", "-y", "-i", input_path, "-ar", "16000", "-ac", "1", wav_path],
-        capture_output=True,
-        text=True
-    )
+    # The input is an untrusted upload. "-protocol_whitelist file" stops a
+    # crafted playlist-style file from making ffmpeg fetch URLs (SSRF);
+    # -nostdin and the timeout stop it from hanging the worker.
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-nostdin", "-hide_banner", "-y",
+             "-protocol_whitelist", "file",
+             "-i", input_path, "-ar", "16000", "-ac", "1", wav_path],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=security_config.subprocess_timeout,
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("STT conversion timed out", timeout=security_config.subprocess_timeout)
+        _unlink_quietly(wav_path)
+        return None
     if result.returncode != 0:
         logger.error(
-            "STT conversion failed: returncode={rc} | stdout={out} | stderr={err}".format(
+            "STT conversion failed: returncode={rc} | stderr={err}".format(
                 rc=result.returncode,
-                out=(result.stdout or "").strip(),
-                err=(result.stderr or "").strip()
+                err=(result.stderr or "").strip()[-2000:]
             )
         )
-        try:
-            os.unlink(wav_path)
-        except Exception:
-            pass
+        _unlink_quietly(wav_path)
         return None
 
     return wav_path
@@ -328,7 +450,7 @@ async def analyze_text(request: TextAnalysisRequest):
         ))
     except Exception as e:
         logger.error("Text analysis failed", error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/analyze/voice")
@@ -338,31 +460,18 @@ async def analyze_voice(file: UploadFile = File(...)):
 
     Upload a WAV audio file.
     """
+    suffix = safe_audio_suffix(file.filename)
+    tmp_path = await _save_upload(file, suffix)
     try:
-        # Save uploaded file to temp location
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            content = await file.read()
-            tmp.write(content)
-            tmp_path = tmp.name
-
-        # Analyze
         result = engine.analyze_voice(tmp_path)
-
-        # Cleanup
-        os.unlink(tmp_path)
-
         return JSONResponse(content=_wrap_response(
             result,
             filename=file.filename
         ))
     except Exception as e:
-        logger.error("Voice analysis failed", error=str(e))
-        if 'tmp_path' in locals():
-            try:
-                os.unlink(tmp_path)
-            except:
-                pass
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
+    finally:
+        _unlink_quietly(tmp_path)
 
 
 @app.post("/analyze/multimodal")
@@ -376,41 +485,31 @@ async def analyze_multimodal(
 
     Accepts text and/or audio file.
     """
-    try:
-        tmp_path = None
-        stt_path = None
-        transcript = None
+    tmp_path = None
+    stt_path = None
+    transcript = None
 
-        # Handle audio if provided
-        if file:
-            suffix = Path(file.filename or "").suffix or ".bin"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                content = await file.read()
-                tmp.write(content)
-                tmp_path = tmp.name
+    # Validate and save audio before the try, so a 413/415 reaches the client
+    # as-is instead of being turned into a 500.
+    if file:
+        suffix = safe_audio_suffix(file.filename)
+        tmp_path = await _save_upload(file, suffix)
+
+    try:
+        if tmp_path:
             stt_path = tmp_path
-            if suffix.lower() != ".wav":
+            if suffix != ".wav":
                 stt_path = _convert_to_wav(tmp_path)
             if stt_path:
                 transcript = _run_stt(stt_path)
             if transcript and not text:
                 text = transcript
 
-        # Analyze
         result = engine.analyze(
             text=text,
             audio_path=tmp_path,
             force_full_text=force_full_text
         )
-
-        # Cleanup
-        if tmp_path:
-            os.unlink(tmp_path)
-        if stt_path and stt_path != tmp_path:
-            try:
-                os.unlink(stt_path)
-            except Exception:
-                pass
 
         return JSONResponse(content=_wrap_response(
             result,
@@ -420,13 +519,11 @@ async def analyze_multimodal(
             transcript=transcript
         ))
     except Exception as e:
-        logger.error("Multimodal analysis failed", error=str(e))
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except:
-                pass
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
+    finally:
+        _unlink_quietly(tmp_path)
+        if stt_path != tmp_path:
+            _unlink_quietly(stt_path)
 
 
 @app.post("/analyze/contextual")
@@ -457,7 +554,7 @@ async def analyze_contextual(request: ContextualAnalysisRequest):
             force_full_text=request.force_full_text
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/patterns/detect")
@@ -482,7 +579,7 @@ async def detect_patterns(request: PatternDetectionRequest):
             days=request.days
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/analyze/batch")
@@ -510,7 +607,7 @@ async def analyze_batch(request: BatchAnalysisRequest):
             include_patterns=request.include_patterns
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/summaries/generate")
@@ -544,7 +641,7 @@ async def generate_summary(request: SummaryRequest):
             date=date_str
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 # Advanced feature endpoints (December 2025 expansion)
@@ -567,7 +664,7 @@ async def calibrate_intensity(request: AnalysisResultRequest):
             analysis_result=analysis_result
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/sarcasm")
@@ -588,7 +685,7 @@ async def detect_sarcasm(request: AnalysisResultRequest):
             analysis_result=analysis_result
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/crisis")
@@ -625,7 +722,7 @@ async def assess_crisis_risk(request: CrisisAssessmentRequest):
             days=days
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/baseline/build")
@@ -657,7 +754,7 @@ async def build_baseline(request: BaselineBuildRequest):
             user_id=user_id
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/baseline/compare")
@@ -685,7 +782,7 @@ async def compare_to_baseline(request: BaselineCompareRequest):
             baseline=baseline
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/transitions/analyze")
@@ -713,7 +810,7 @@ async def analyze_transitions(request: TransitionAnalyzeRequest):
             min_transition_count=min_count
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/transitions/track")
@@ -745,7 +842,7 @@ async def track_transition(request: TransitionTrackRequest):
             transition_patterns=patterns
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/context")
@@ -777,7 +874,7 @@ async def apply_context(request: ContextRequest):
             user_timezone=user_timezone
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/congruence")
@@ -817,7 +914,7 @@ async def check_congruence(request: CongruenceRequest):
             baseline=baseline
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/predict/learn")
@@ -845,7 +942,7 @@ async def learn_prediction_patterns(request: PredictLearnRequest):
             baseline=baseline
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/predict/next")
@@ -875,7 +972,7 @@ async def predict_next_emotion(request: PredictNextRequest):
             timeframe=timeframe
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/triggers/identify")
@@ -903,7 +1000,7 @@ async def identify_triggers(request: TriggerIdentifyRequest):
             min_occurrences=min_occ
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/triggers/check")
@@ -931,7 +1028,7 @@ async def check_for_trigger(request: TriggerCheckRequest):
             known_triggers=known_triggers
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/group/analyze")
@@ -962,7 +1059,7 @@ async def analyze_group_emotion(request: GroupAnalyzeRequest):
             group_metadata=group_metadata
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/cultural/adapt")
@@ -994,7 +1091,7 @@ async def adapt_for_culture(request: CulturalAdaptRequest):
             auto_detect=auto_detect
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.post("/advanced/coherence")
@@ -1042,7 +1139,7 @@ async def score_coherence(request: CoherenceScoreRequest):
             cultural_adaptation=cultural_adaptation
         ))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error(e)
 
 
 @app.get("/health")
@@ -1066,7 +1163,7 @@ class EmpathyAPI:
 
     Usage:
         api = EmpathyAPI()
-        api.run(host="0.0.0.0", port=8000)
+        api.run(host="127.0.0.1", port=8000)
     """
 
     def __init__(self):
@@ -1090,10 +1187,28 @@ def main() -> None:
     Console-script entry point.
 
     Environment variables:
-      - HOST (default: 0.0.0.0)
+      - HOST (default: 127.0.0.1, this machine only; the Docker image sets 0.0.0.0)
       - PORT (default: 8000)
+      - EMPATHY_ENGINE_* security settings, see api/security.py
     """
-    host = os.getenv("HOST", "0.0.0.0")
+    if not security_config.auth_configured:
+        sys.exit(
+            "Refusing to start: no API keys configured.\n"
+            "  Set EMPATHY_ENGINE_API_KEYS (generate one with:\n"
+            "    python -c \"import secrets; print(secrets.token_urlsafe(32))\")\n"
+            "  or, for local development only, EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED=1"
+        )
+    host = os.getenv("HOST", "127.0.0.1")
+
+    if security_config.allow_unauthenticated:
+        if host not in LOOPBACK_HOSTS:
+            sys.exit(
+                f"Refusing to start: keys are disabled (EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED) "
+                f"but HOST={host} would expose the API beyond this machine.\n"
+                "  Use HOST=127.0.0.1, or configure EMPATHY_ENGINE_API_KEYS."
+            )
+        logger.warning("API keys are DISABLED (local mode); reachable from this machine only")
+
     try:
         port = int(os.getenv("PORT", "8000"))
     except ValueError:
@@ -1105,5 +1220,4 @@ def main() -> None:
 
 # CLI entry point
 if __name__ == "__main__":
-    api = EmpathyAPI()
-    api.run(host="0.0.0.0", port=8000)
+    main()

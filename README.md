@@ -51,6 +51,8 @@ and falls back to fast VADER-based analysis.
 
 ```bash
 pip install -e ".[ml]"    # transformer emotion detection (torch, ~2GB)
+# Tip: CPU-only torch is ~200MB instead of ~2GB (no NVIDIA libraries):
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -e ".[ml]"
 pip install -e ".[api]"   # REST API (FastAPI + uvicorn)
 pip install -e ".[nlp]"   # embeddings, spaCy entities, readability
 pip install -e ".[all]"   # everything
@@ -134,38 +136,76 @@ print(result['patterns'])  # Anxiety spikes, low-energy periods, etc.
 
 #### Start the server
 
+Every endpoint except `/`, `/health` and the docs (`/docs`, `/openapi.json`) needs an
+API key, and the server refuses to start without one.
+
 ```bash
-# Default (localhost:8000)
+# Generate a key (keep it secret; give each client app its own)
+export EMPATHY_ENGINE_API_KEYS="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
+# Default: this machine only (127.0.0.1:8000)
 python -m empathy_engine.api.server
 
-# Or with uvicorn directly
-uvicorn empathy_engine.api.server:app --host 0.0.0.0 --port 8000
+# Local mode: no keys, this machine only (refuses to start on any other address).
+# Once the emotion model is downloaded it also loads it offline (HF_HUB_OFFLINE=1),
+# so nothing contacts huggingface.co.
+./run_local.sh
+```
+
+#### Security settings
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `EMPATHY_ENGINE_API_KEYS` | *(none: server won't start)* | Comma-separated keys (16+ chars). Several keys let you give each app its own and revoke one at a time. |
+| `EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED` | off | `1` disables keys (what `run_local.sh` does). Only allowed with a local `HOST` (127.0.0.1 / localhost / ::1). |
+| `EMPATHY_ENGINE_CORS_ORIGINS` | *(none)* | Browser origins allowed to call the API, e.g. `https://app.example.com`. Not needed for servers, scripts or mobile apps. |
+| `EMPATHY_ENGINE_MAX_UPLOAD_MB` | 25 | Largest audio upload. |
+| `EMPATHY_ENGINE_MAX_BODY_MB` | 2 | Largest JSON/form body. |
+| `EMPATHY_ENGINE_SUBPROCESS_TIMEOUT` | 120 | Seconds before ffmpeg / speech-to-text are stopped. |
+| `HOST` / `PORT` | `127.0.0.1` / `8000` | Bind address. Use `0.0.0.0` only behind a firewall, VPN or HTTPS reverse proxy. |
+
+Accepted audio uploads: `.wav .mp3 .m4a .ogg .oga .opus .flac .webm .aac` (a file with no extension is treated as WAV).
+Errors return a generic message; details go to the server log, which never records transcripts.
+
+Not handled by the server itself (put it behind a reverse proxy such as Caddy or nginx for these):
+HTTPS, rate limiting, and per-client usage tracking.
+
+Docker:
+
+```bash
+docker build -t empathy-engine .
+docker run -p 127.0.0.1:8000:8000 -e EMPATHY_ENGINE_API_KEYS="$EMPATHY_ENGINE_API_KEYS" empathy-engine
 ```
 
 #### Make API requests
 
+Send the key as `Authorization: Bearer <key>` (or `X-API-Key: <key>`):
+
 ```bash
+AUTH="Authorization: Bearer $EMPATHY_ENGINE_API_KEYS"
+
 # Text analysis
 curl -X POST "http://localhost:8000/analyze/text" \
-  -H "Content-Type: application/json" \
-  -d '{"text": "I'm feeling stressed", "force_full": false}'
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"text": "I am feeling stressed", "force_full": false}'
 
 # Voice analysis
 curl -X POST "http://localhost:8000/analyze/voice" \
-  -F "file=@recording.wav"
+  -H "$AUTH" -F "file=@recording.wav"
 
 # Multi-modal fusion
 curl -X POST "http://localhost:8000/analyze/multimodal" \
-  -F "text=I'm fine" \
+  -H "$AUTH" -F "text=I'm fine" \
   -F "file=@recording.wav"
 
 # Pattern detection
 curl -X POST "http://localhost:8000/patterns/detect" \
-  -H "Content-Type: application/json" \
+  -H "$AUTH" -H "Content-Type: application/json" \
   -d '{
     "entries": [...],
     "days": 30
   }'
+```
 
 Response envelopes (alpha):
 

@@ -5,7 +5,9 @@ Sentiment, emotion detection, and keyword extraction
 Extracted from MoodRing (Nov 2025)
 """
 
+import importlib.util
 import json
+from functools import lru_cache
 from typing import Dict, Optional
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import yake
@@ -131,6 +133,17 @@ class TextAnalyzer:
             'sentiment_compound': compound
         }
 
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def ml_available() -> bool:
+        """
+        True if the [ml] extra (transformers + torch) is installed.
+
+        Only checks that the packages exist; nothing heavy is imported, so
+        this stays instant and lazy loading is preserved.
+        """
+        return all(importlib.util.find_spec(name) is not None for name in ("transformers", "torch"))
+
     def analyze_emotions(self, text: str) -> Dict:
         """
         Detect emotions using transformer model.
@@ -155,7 +168,8 @@ class TextAnalyzer:
             return {
                 'emotion_primary': primary['label'],
                 'emotion_confidence': round(primary['score'], 4),
-                'emotions_json': json.dumps(emotions_dict)
+                'emotions_json': json.dumps(emotions_dict),
+                'analysis_mode': 'full'
             }
         except Exception as e:
             logger.error("Emotion analysis error", error=str(e))
@@ -166,7 +180,9 @@ class TextAnalyzer:
             return {
                 'emotion_primary': primary_emotion[0],
                 'emotion_confidence': primary_emotion[1],
-                'emotions_json': json.dumps(emotion_dist)
+                'emotions_json': json.dumps(emotion_dist),
+                # The model couldn't run: this is sentiment-mapped, like quick mode.
+                'analysis_mode': 'quick-fallback'
             }
 
     def extract_keywords(self, text: str) -> Dict:
@@ -320,6 +336,7 @@ class TextAnalyzer:
 
         results = {}
         results['text'] = text
+        results['analysis_mode'] = 'quick'
 
         # Sentiment analysis (always fast)
         sentiment = self.analyze_sentiment(text)
@@ -354,11 +371,23 @@ class TextAnalyzer:
     def analyze(self, text: str, force_full: bool = False) -> Dict:
         """
         Perform analysis on text.
-        Uses quick analysis for short texts (<20 words) unless force_full=True.
+
+        Uses the transformer emotion model whenever the [ml] extra is
+        installed. Without it, short texts (<20 words) use quick analysis
+        unless force_full=True.
+
+        Quick analysis only maps sentiment to an emotion (positive -> joy,
+        negative -> sadness), so it can never report fear, anger, disgust or
+        surprise. It used to be the default for all short texts, which is most
+        journal entries, even with the model installed.
+
+        The result's 'analysis_mode' says what actually ran: 'full', 'quick',
+        or 'quick-fallback' (full was requested but the model couldn't run).
 
         Args:
             text: Input text to analyze
-            force_full: Force full transformer analysis even for short text
+            force_full: Try the transformer model even for short text when
+                [ml] isn't detected (falls back to quick inference if it fails)
 
         Returns:
             Combined dict with all analysis results
@@ -368,8 +397,8 @@ class TextAnalyzer:
 
         word_count = len(text.split())
 
-        # Use quick analysis for short entries
-        if word_count < 20 and not force_full:
+        # Quick analysis only for short entries when the model isn't installed
+        if word_count < 20 and not force_full and not self.ml_available():
             return self.analyze_quick(text)
 
         results = {}

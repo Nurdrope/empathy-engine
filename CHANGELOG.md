@@ -1,5 +1,37 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Short texts (<20 words) now use the transformer emotion model whenever the
+  `[ml]` extra is installed. Previously they always used quick mode, which only
+  maps sentiment to joy/sadness and can never report fear, anger, disgust or
+  surprise. On 8 short test sentences: model 7/8 correct, quick mode ~2/8
+  (e.g. "I'm really anxious about the appointment tomorrow and I can't sleep"
+  went from sadness to fear 99%). Without `[ml]`, behavior is unchanged.
+- `run_local.sh` loads the emotion model offline once it is downloaded
+  (`HF_HUB_OFFLINE=1`): no update checks to huggingface.co (was 12 requests
+  per start). A fresh install stays online for the first download.
+- Text results include `analysis_mode`: `full`, `quick`, or `quick-fallback`
+  (model requested but couldn't run), so callers know what they got.
+
+### Security
+- API keys required on every endpoint except `/`, `/health` and the docs
+  (`EMPATHY_ENGINE_API_KEYS`; `Authorization: Bearer` or `X-API-Key`). New
+  endpoints are protected by default. The server refuses to start without keys
+  unless `EMPATHY_ENGINE_ALLOW_UNAUTHENTICATED=1` (local development).
+- CORS is off by default (was `*`); allow specific origins with
+  `EMPATHY_ENGINE_CORS_ORIGINS`.
+- Request size limits: 25 MB audio uploads, 2 MB other bodies (configurable);
+  streamed bodies without a Content-Length are rejected.
+- Uploads restricted to known audio extensions; temp files always deleted.
+- ffmpeg and the STT command now time out, and ffmpeg can only read local
+  files (blocks URL-fetching tricks in crafted media files).
+- 500 errors no longer return exception text; transcripts are never logged.
+- Default bind address is now `127.0.0.1` (was `0.0.0.0`); the Docker image
+  sets `HOST=0.0.0.0` itself, runs as a non-root user, and now installs the
+  API dependencies it needs to start.
+
 ## 1.0.1 - 2026-07-04
 
 ### Changed
