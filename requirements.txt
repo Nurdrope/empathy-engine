@@ -1,36 +1,25 @@
-# EmpathyEngine Dependencies
-# Multi-modal emotional intelligence system
+# EmpathyEngine — core dependencies
+# (matches install_requires in setup.py; prefer `pip install -e .`)
+#
+# Optional feature sets are pip extras — see setup.py / README:
+#   pip install -e ".[ml]"    # transformers + torch emotion detection (~2GB)
+#   pip install -e ".[api]"   # FastAPI REST layer
+#   pip install -e ".[nlp]"   # sentence-transformers, spacy, textstat
+#   pip install -e ".[all]"   # everything
 
-# Core ML/AI
 numpy>=1.24.0
 scipy>=1.10.0
 
-# Text Analysis
-vaderSentiment>=3.3.2  # Fast sentiment analysis
-yake>=0.4.8  # Keyword extraction
-empath>=0.89  # Lexicon-based category analysis
-sentence-transformers>=2.2.2  # Semantic embeddings (optional)
-spacy>=3.6.0  # Entities/linguistics (optional)
-textstat>=0.7.3  # Readability metrics (optional)
-transformers>=4.30.0  # Emotion detection (j-hartmann/emotion-english-distilroberta-base)
-torch>=2.0.0  # Required by transformers
+# Text analysis
+vaderSentiment>=3.3.2
+yake>=0.4.8
+empath>=0.89
 
-# Voice/Audio Analysis
-librosa>=0.10.0  # Prosody feature extraction
-soundfile>=0.12.1  # Audio I/O for librosa
-audioread>=3.0.0  # Audio decoding
-numba>=0.57.0  # Performance for librosa
-opensmile>=2.4.1  # Feature extraction (optional)
-praat-parselmouth>=0.4.3  # Advanced prosody (optional)
-
-# API Layer (optional - for microservice mode)
-fastapi>=0.100.0  # REST API framework
-uvicorn[standard]>=0.23.0  # ASGI server
-python-multipart>=0.0.6  # File upload support
-pydantic>=2.0.0  # Request/response validation
+# Voice/audio analysis
+librosa>=0.10.0
+soundfile>=0.12.1
+audioread>=3.0.0
+numba>=0.57.0
 
 # Utilities
-python-dateutil>=2.8.2  # Date handling
-pydantic-settings>=2.0.0  # Config management (optional)
-structlog>=23.1.0  # Structured logging (optional)
-loguru>=0.7.0  # Simple logging (optional)
+python-dateutil>=2.8.2

@@ -159,10 +159,14 @@ class TextAnalyzer:
             }
         except Exception as e:
             logger.error("Emotion analysis error", error=str(e))
+            # Degrade to VADER-based inference (e.g. [ml] extra not installed)
+            sentiment_label = self.analyze_sentiment(text).get('sentiment_label', 'neutral')
+            emotion_dist = self._quick_emotion_map.get(sentiment_label, self._quick_emotion_map['neutral'])
+            primary_emotion = max(emotion_dist.items(), key=lambda x: x[1])
             return {
-                'emotion_primary': None,
-                'emotion_confidence': None,
-                'emotions_json': None
+                'emotion_primary': primary_emotion[0],
+                'emotion_confidence': primary_emotion[1],
+                'emotions_json': json.dumps(emotion_dist)
             }
 
     def extract_keywords(self, text: str) -> Dict:

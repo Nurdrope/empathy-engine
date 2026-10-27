@@ -232,7 +232,7 @@ Born from **MoodRing's legendary 9-hour session** (Nov 21, 2025) where multi-mod
 
 ## Credits
 
-**Creator**: Fire Dragon (1976) / Gertz Holdings
+**Creator**: Nurdrope
 **Extracted From**: MoodRing Division
 **The Breakthrough**: November 21, 2025
 **Project Separation**: December 2, 2025

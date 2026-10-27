@@ -266,4 +266,4 @@ For issues, questions, or feature requests:
 
 **EMPATHY Engine v0.1.0**
 Extracted from MoodRing (Nov 2025)
-Fire Dragon (1976) / Gertz Holdings
+Nurdrope

@@ -739,7 +739,7 @@ if result['fusion']['agreement'] == False:
 
 **EMPATHY Engine**
 Extracted from MoodRing (November 2025)
-Fire Dragon (1976) / Gertz Holdings
+Nurdrope
 
 This is the standalone emotional intelligence system that powered MoodRing's breakthrough moment on November 21, 2025, when it detected fear at 95.9% confidence and caught frustration beneath positive words at 93.3% accuracy.
 
